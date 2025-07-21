@@ -71,6 +71,76 @@ def update_description(*args):
     update_image(selected)
 
 
+def labeled_entry(parent, label):
+    tb.Label(parent, text=label).pack(anchor=W, pady=(10, 2))
+    e = tb.Entry(parent)
+    e.pack(fill=X)
+    return e
+
+
+# ---- Payoff Plotting Function ----
+def plot_spread_payoff():
+    try:
+        K1 = float(entry_K1.get())
+        K2 = float(entry_K2.get())
+        P1 = float(entry_P1.get())
+        P2 = float(entry_P2.get())
+        spread_type = spread_type_var.get()
+
+        S = np.linspace(min(K1, K2) - 20, max(K1, K2) + 20, 200)
+        if spread_type == "Vertical Call Spread":
+            payoff = np.maximum(S - K1, 0) - P1 - (np.maximum(S - K2, 0) - P2)
+        elif spread_type == "Vertical Put Spread":
+            payoff = (np.maximum(K2 - S, 0) - P2) - (np.maximum(K1 - S, 0) - P1)
+        else:
+            payoff = np.zeros_like(S)
+
+        ax.clear()
+        ax.plot(S, payoff, label="Payoff", color="cyan")
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+        ax.set_title(f"{spread_type} Payoff")
+        ax.set_xlabel("Stock Price at Expiration")
+        ax.set_ylabel("Profit / Loss")
+        ax.grid(True)
+        ax.legend()
+        canvas.draw()
+    except ValueError:
+        pass
+
+
+def load_expirations():
+    ticker = symbol_var.get().strip().upper()
+    if not ticker:
+        return
+    try:
+        stock = yf.Ticker(ticker)
+        expirations = stock.options
+        expiration_menu["values"] = expirations
+        if expirations:
+            expiration_var.set(expirations[0])
+    except Exception as e:
+        print("Error loading expirations:", e)
+        expiration_menu["values"] = []
+        expiration_var.set("")
+
+
+def load_chain():
+    tree.delete(*tree.get_children())
+    ticker = symbol_var.get().strip().upper()
+    expiration = expiration_var.get()
+    if not ticker or not expiration:
+        return
+    try:
+        stock = yf.Ticker(ticker)
+        chain = stock.option_chain(expiration)
+        calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+        for _, row in calls.iterrows():
+            tree.insert("", tk.END, values=(
+                row["strike"], row["bid"], row["ask"],
+                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
+            ))
+    except Exception as e:
+        print("Error loading chain:", e)
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
 app.title("Options Tools")
@@ -242,45 +312,12 @@ tb.Label(tab4, text="Select Spread Type:", font=("Segoe UI", 10)).pack(anchor=W,
 spread_type_var = tk.StringVar(value="Vertical Call Spread")
 tb.Combobox(tab4, textvariable=spread_type_var, values=["Vertical Call Spread", "Vertical Put Spread"]).pack(fill=X)
 
-def labeled_entry(parent, label):
-    tb.Label(parent, text=label).pack(anchor=W, pady=(10, 2))
-    e = tb.Entry(parent)
-    e.pack(fill=X)
-    return e
 
 entry_K1 = labeled_entry(tab4, "Buy Strike (K1):")
 entry_K2 = labeled_entry(tab4, "Sell Strike (K2):")
 entry_P1 = labeled_entry(tab4, "Buy Premium (P1):")
 entry_P2 = labeled_entry(tab4, "Sell Premium (P2):")
 
-# ---- Payoff Plotting Function ----
-def plot_spread_payoff():
-    try:
-        K1 = float(entry_K1.get())
-        K2 = float(entry_K2.get())
-        P1 = float(entry_P1.get())
-        P2 = float(entry_P2.get())
-        spread_type = spread_type_var.get()
-
-        S = np.linspace(min(K1, K2) - 20, max(K1, K2) + 20, 200)
-        if spread_type == "Vertical Call Spread":
-            payoff = np.maximum(S - K1, 0) - P1 - (np.maximum(S - K2, 0) - P2)
-        elif spread_type == "Vertical Put Spread":
-            payoff = (np.maximum(K2 - S, 0) - P2) - (np.maximum(K1 - S, 0) - P1)
-        else:
-            payoff = np.zeros_like(S)
-
-        ax.clear()
-        ax.plot(S, payoff, label="Payoff", color="cyan")
-        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
-        ax.set_title(f"{spread_type} Payoff")
-        ax.set_xlabel("Stock Price at Expiration")
-        ax.set_ylabel("Profit / Loss")
-        ax.grid(True)
-        ax.legend()
-        canvas.draw()
-    except ValueError:
-        pass
 
 # ---- Button ----
 tb.Button(tab4, text="Plot Payoff", bootstyle=SUCCESS, command=plot_spread_payoff).pack(pady=10)
@@ -312,40 +349,6 @@ for col in columns:
     tree.column(col, anchor="center")
 tree.pack(fill="both", expand=True)
 
-def load_expirations():
-    ticker = symbol_var.get().strip().upper()
-    print(f"Fetching expirations for {ticker}")  # 👈 DEBUG
-    if not ticker:
-        return
-    try:
-        stock = yf.Ticker(ticker)
-        expirations = stock.options
-        print("Expirations:", expirations)  # 👈 DEBUG
-        expiration_menu["values"] = expirations
-        if expirations:
-            expiration_var.set(expirations[0])
-    except Exception as e:
-        print("Error loading expirations:", e)
-        expiration_menu["values"] = []
-        expiration_var.set("")
-        
-def load_chain():
-    tree.delete(*tree.get_children())
-    ticker = symbol_var.get().strip().upper()
-    expiration = expiration_var.get()
-    if not ticker or not expiration:
-        return
-    try:
-        stock = yf.Ticker(ticker)
-        chain = stock.option_chain(expiration)
-        calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
-        for _, row in calls.iterrows():
-            tree.insert("", tk.END, values=(
-                row["strike"], row["bid"], row["ask"],
-                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
-            ))
-    except Exception as e:
-        print("Error loading chain:", e)
 
 tb.Button(tab5, text="Load Expirations", bootstyle=INFO, command=load_expirations).pack(pady=5)
 tb.Button(tab5, text="Load Option Chain", bootstyle=PRIMARY, command=load_chain).pack(pady=(0, 10))
