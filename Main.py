@@ -42,6 +42,12 @@ def calculate_mispricing():
     except ValueError:
         result_var.set("Invalid input")
 
+def add_labeled_entry(parent, label_text):
+    tb.Label(parent, text=label_text).pack(anchor=W, pady=5)
+    entry = tb.Entry(parent)
+    entry.pack(fill=X)
+    return entry
+
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
 app.title("Options Tools")
@@ -53,12 +59,6 @@ notebook.pack(fill=BOTH, expand=True)
 # ------------------ TAB 1: Mispricing Calculator ------------------
 tab1 = tb.Frame(notebook, padding=20)
 notebook.add(tab1, text="Mispricing Calculator")
-
-def add_labeled_entry(parent, label_text):
-    tb.Label(parent, text=label_text).pack(anchor=W, pady=5)
-    entry = tb.Entry(parent)
-    entry.pack(fill=X)
-    return entry
 
 entry_S = add_labeled_entry(tab1, "Underlying Price (S):")
 entry_K = add_labeled_entry(tab1, "Strike Price (K):")
