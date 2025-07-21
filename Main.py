@@ -7,9 +7,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import yfinance as yf
-import pandas as pd
 
-# ------------------- TAB 3: Spread Creator ------------------
 from PIL import Image, ImageTk
 import os
 
@@ -141,6 +139,10 @@ def load_chain():
             ))
     except Exception as e:
         print("Error loading chain:", e)
+
+def init_app():
+    return
+
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
 app.title("Options Tools")
@@ -164,7 +166,7 @@ tb.Label(tab1, text="Option Type:").pack(anchor=W, pady=5)
 option_type_var = tk.StringVar(value="call")
 tb.Combobox(tab1, textvariable=option_type_var, values=["call", "put"]).pack(fill=X)
 
-tb.Button(tab1, text="Calculate Mispricing", bootstyle=SUCCESS, command=calculate_mispricing).pack(pady=15)
+tb.Button(tab1, text="Calculate Mispricing", command=calculate_mispricing).pack(pady=15)
 result_var = tk.StringVar()
 tb.Label(tab1, textvariable=result_var, font=("Segoe UI", 12, "bold")).pack()
 
@@ -320,7 +322,7 @@ entry_P2 = labeled_entry(tab4, "Sell Premium (P2):")
 
 
 # ---- Button ----
-tb.Button(tab4, text="Plot Payoff", bootstyle=SUCCESS, command=plot_spread_payoff).pack(pady=10)
+tb.Button(tab4, text="Plot Payoff", command=plot_spread_payoff).pack(pady=10)
 
 # ---- Matplotlib Canvas ----
 fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
@@ -350,8 +352,8 @@ for col in columns:
 tree.pack(fill="both", expand=True)
 
 
-tb.Button(tab5, text="Load Expirations", bootstyle=INFO, command=load_expirations).pack(pady=5)
-tb.Button(tab5, text="Load Option Chain", bootstyle=PRIMARY, command=load_chain).pack(pady=(0, 10))
+tb.Button(tab5, text="Load Expirations", command=load_expirations).pack(pady=5)
+tb.Button(tab5, text="Load Option Chain", command=load_chain).pack(pady=(0, 10))
 
 # Start app
 app.mainloop()
