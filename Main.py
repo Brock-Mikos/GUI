@@ -9,6 +9,9 @@ import matplotlib.pyplot as plt
 import yfinance as yf
 import pandas as pd
 
+# ------------------- TAB 3: Spread Creator ------------------
+from PIL import Image, ImageTk
+import os
 
 # --- Black-Scholes pricing function ---
 def black_scholes_price(S, K, T, r, sigma, option_type='call'):
@@ -48,6 +51,26 @@ def add_labeled_entry(parent, label_text):
     entry.pack(fill=X)
     return entry
 
+# Load and update image
+def update_image(strategy):
+    image_path = f"spreads/{strategy.replace(' ', '_').lower()}.png"
+    if os.path.exists(image_path):
+        img = Image.open(image_path).resize((400, 250))
+        photo = ImageTk.PhotoImage(img)
+        image_label.config(image=photo)
+        image_label.image = photo
+    else:
+        image_label.config(image="", text="No image available.")
+
+# Description and image update
+def update_description(*args):
+    selected = spread_var.get()
+    desc = spread_descriptions.get(selected, "Description coming soon...")
+    description_text.delete("1.0", tk.END)
+    description_text.insert(tk.END, desc)
+    update_image(selected)
+
+
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
 app.title("Options Tools")
@@ -81,9 +104,6 @@ notebook.add(tab2, text="Option Screener")
 
 tb.Label(tab2, text="Option screener functionality coming soon...", font=("Segoe UI", 11)).pack(pady=50)
 
-# ------------------- TAB 3: Spread Creator ------------------
-from PIL import Image, ImageTk
-import os
 
 # --- TAB 3: Spread Optimizer ---
 tab3 = tb.Frame(notebook, padding=20)
@@ -207,25 +227,6 @@ spread_descriptions = {
         "• Like insurance: caps losses, keeps upside."
     )
 }
-
-# Load and update image
-def update_image(strategy):
-    image_path = f"spreads/{strategy.replace(' ', '_').lower()}.png"
-    if os.path.exists(image_path):
-        img = Image.open(image_path).resize((400, 250))
-        photo = ImageTk.PhotoImage(img)
-        image_label.config(image=photo)
-        image_label.image = photo
-    else:
-        image_label.config(image="", text="No image available.")
-
-# Description and image update
-def update_description(*args):
-    selected = spread_var.get()
-    desc = spread_descriptions.get(selected, "Description coming soon...")
-    description_text.delete("1.0", tk.END)
-    description_text.insert(tk.END, desc)
-    update_image(selected)
 
 # Initialize
 spread_var.trace_add("write", update_description)
