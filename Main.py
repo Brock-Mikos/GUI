@@ -183,30 +183,40 @@ def load_chain():
         r = 0.05  # Hardcoded risk-free rate
         T = (pd.to_datetime(expiration) - pd.Timestamp.today()).days / 365.0
 
+        # Tag configuration for ATM rows
+        call_tree.tag_configure("atm", background="#1f77b4")  # Blue
+        put_tree.tag_configure("atm", background="#ff7f0e")   # Orange
+
+        # Find ATM strike
+        all_strikes = sorted(set(calls["strike"]).union(set(puts["strike"])))
+        atm_strike = min(all_strikes, key=lambda x: abs(x - current_price))
+
+        # Load Calls
         for _, row in calls.iterrows():
             K = row["strike"]
             sigma = row["impliedVolatility"]
             delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "call")
-
+            tag = "atm" if abs(K - atm_strike) < 0.01 else ""
             call_tree.insert("", tk.END, values=(
                 K, row["bid"], row["ask"],
                 f"{sigma*100:.2f}%", row["volume"],
                 f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
-            ))
+            ), tags=(tag,))
 
+        # Load Puts
         for _, row in puts.iterrows():
             K = row["strike"]
             sigma = row["impliedVolatility"]
             delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "put")
-
+            tag = "atm" if abs(K - atm_strike) < 0.01 else ""
             put_tree.insert("", tk.END, values=(
                 K, row["bid"], row["ask"],
                 f"{sigma*100:.2f}%", row["volume"],
                 f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
-            ))
-
+            ), tags=(tag,))
     except Exception as e:
         print("Error loading chain:", e)
+
 
 
 
@@ -416,7 +426,7 @@ expiration_menu = ttk.Combobox(tab5, textvariable=expiration_var)
 expiration_menu.pack(fill=X, pady=(10, 5))
 expiration_menu.bind("<<ComboboxSelected>>", lambda e: load_chain())  # Change expiration triggers reload
 
-# --- Option Tables ---
+# --- Treeview Column Setup ---
 columns = ("Strike", "Bid", "Ask", "IV", "Volume", "Delta", "Gamma", "Theta", "Vega", "Rho")
 
 frame = tb.Frame(tab5)
@@ -426,25 +436,28 @@ frame.grid_rowconfigure(1, weight=1)
 frame.grid_columnconfigure(0, weight=1)
 frame.grid_columnconfigure(1, weight=1)
 
-# Calls Table
+# ----- CALL TREE -----
 call_label = tb.Label(frame, text="Calls", anchor="center", font=("Segoe UI", 10, "bold"))
 call_label.grid(row=0, column=0, sticky="n", padx=10)
 
 call_tree = ttk.Treeview(frame, columns=columns, show="headings")
+call_tree.tag_configure("atm", background="#1f77b4")  # Blue highlight for ATM call
 for col in columns:
     call_tree.heading(col, text=col)
     call_tree.column(col, anchor="center", width=80)
 call_tree.grid(row=1, column=0, sticky="nsew", padx=10)
 
-# Puts Table
+# ----- PUT TREE -----
 put_label = tb.Label(frame, text="Puts", anchor="center", font=("Segoe UI", 10, "bold"))
 put_label.grid(row=0, column=1, sticky="n", padx=10)
 
 put_tree = ttk.Treeview(frame, columns=columns, show="headings")
+put_tree.tag_configure("atm", background="#ff7f0e")  # Orange highlight for ATM put
 for col in columns:
     put_tree.heading(col, text=col)
     put_tree.column(col, anchor="center", width=80)
 put_tree.grid(row=1, column=1, sticky="nsew", padx=10)
+
 
 # Start app
 app.mainloop()
