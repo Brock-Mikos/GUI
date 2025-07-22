@@ -7,8 +7,9 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import yfinance as yf
-import pandas as pd
 
+from PIL import Image, ImageTk
+import os
 
 # --- Black-Scholes pricing function ---
 def black_scholes_price(S, K, T, r, sigma, option_type='call'):
@@ -24,6 +25,33 @@ def black_scholes_price(S, K, T, r, sigma, option_type='call'):
     except Exception:
         return 0.0
 
+def calculate_greeks(S, K, T, r, sigma, option_type='call'):
+    try:
+        if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+            return (0, 0, 0, 0, 0)
+
+        d1 = (np.log(S / K) + (r + 0.5 * sigma ** 2) * T) / (sigma * np.sqrt(T))
+        d2 = d1 - sigma * np.sqrt(T)
+
+        if option_type == 'call':
+            delta = norm.cdf(d1)
+            theta = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T))
+                     - r * K * np.exp(-r * T) * norm.cdf(d2))
+            rho = K * T * np.exp(-r * T) * norm.cdf(d2)
+        else:
+            delta = -norm.cdf(-d1)
+            theta = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T))
+                     + r * K * np.exp(-r * T) * norm.cdf(-d2))
+            rho = -K * T * np.exp(-r * T) * norm.cdf(-d2)
+
+        gamma = norm.pdf(d1) / (S * sigma * np.sqrt(T))
+        vega = S * norm.pdf(d1) * np.sqrt(T)
+
+        return delta, gamma, theta / 365, vega / 100, rho / 100
+    except Exception:
+        return (0, 0, 0, 0, 0)
+
+
 # --- Mispricing logic ---
 def calculate_mispricing():
     try:
@@ -37,10 +65,118 @@ def calculate_mispricing():
 
         model_price = black_scholes_price(S, K, T, r, sigma, option_type)
         mispricing = (market_price - model_price) / model_price * 100 if model_price != 0 else float('inf')
+        delta, gamma, theta, vega, rho = calculate_greeks(S, K, T, r, sigma, option_type)
 
-        result_var.set(f"Model Price: ${model_price:.2f}\nMispricing: {mispricing:.2f}%")
+        result_var.set( f"Model Price: ${model_price:.2f}\n"
+            f"Mispricing: {mispricing:.2f}%\n\n"
+            f"Δ Delta: {delta:.4f}\n"
+            f"Γ Gamma: {gamma:.4f}\n"
+            f"Θ Theta: {theta:.4f}\n"
+            f"V Vega: {vega:.4f}\n"
+            f"ρ Rho: {rho:.4f}"
+        )
     except ValueError:
         result_var.set("Invalid input")
+
+def add_labeled_entry(parent, label_text):
+    tb.Label(parent, text=label_text).pack(anchor=W, pady=5)
+    entry = tb.Entry(parent)
+    entry.pack(fill=X)
+    return entry
+
+# Load and update image
+def update_image(strategy):
+    image_path = f"spreads/{strategy.replace(' ', '_').lower()}.png"
+    if os.path.exists(image_path):
+        img = Image.open(image_path).resize((400, 250))
+        photo = ImageTk.PhotoImage(img)
+        image_label.config(image=photo)
+        image_label.image = photo
+    else:
+        image_label.config(image="", text="No image available.")
+
+# Description and image update
+def update_description(*args):
+    selected = spread_var.get()
+    desc = spread_descriptions.get(selected, "Description coming soon...")
+    description_text.delete("1.0", tk.END)
+    description_text.insert(tk.END, desc)
+    update_image(selected)
+
+
+def labeled_entry(parent, label):
+    tb.Label(parent, text=label).pack(anchor=W, pady=(10, 2))
+    e = tb.Entry(parent)
+    e.pack(fill=X)
+    return e
+
+
+# ---- Payoff Plotting Function ----
+def plot_spread_payoff():
+    try:
+        K1 = float(entry_K1.get())
+        K2 = float(entry_K2.get())
+        P1 = float(entry_P1.get())
+        P2 = float(entry_P2.get())
+        spread_type = spread_type_var.get()
+
+        S = np.linspace(min(K1, K2) - 20, max(K1, K2) + 20, 200)
+        if spread_type == "Vertical Call Spread":
+            payoff = np.maximum(S - K1, 0) - P1 - (np.maximum(S - K2, 0) - P2)
+        elif spread_type == "Vertical Put Spread":
+            payoff = (np.maximum(K2 - S, 0) - P2) - (np.maximum(K1 - S, 0) - P1)
+        else:
+            payoff = np.zeros_like(S)
+
+        ax.clear()
+        ax.plot(S, payoff, label="Payoff", color="cyan")
+        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
+        ax.set_title(f"{spread_type} Payoff")
+        ax.set_xlabel("Stock Price at Expiration")
+        ax.set_ylabel("Profit / Loss")
+        ax.grid(True)
+        ax.legend()
+        canvas.draw()
+    except ValueError:
+        pass
+
+
+def load_expirations():
+    ticker = symbol_var.get().strip().upper()
+    if not ticker:
+        return
+    try:
+        stock = yf.Ticker(ticker)
+        expirations = stock.options
+        expiration_menu["values"] = expirations
+        if expirations:
+            expiration_var.set(expirations[0])
+    except Exception as e:
+        print("Error loading expirations:", e)
+        expiration_menu["values"] = []
+        expiration_var.set("")
+
+
+def load_chain():
+    tree.delete(*tree.get_children())
+    ticker = symbol_var.get().strip().upper()
+    expiration = expiration_var.get()
+    if not ticker or not expiration:
+        return
+    try:
+        stock = yf.Ticker(ticker)
+        chain = stock.option_chain(expiration)
+        calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+        for _, row in calls.iterrows():
+            tree.insert("", tk.END, values=(
+                row["strike"], row["bid"], row["ask"],
+                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
+            ))
+    except Exception as e:
+        print("Error loading chain:", e)
+
+def init_app():
+    return
 
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
@@ -54,12 +190,6 @@ notebook.pack(fill=BOTH, expand=True)
 tab1 = tb.Frame(notebook, padding=20)
 notebook.add(tab1, text="Mispricing Calculator")
 
-def add_labeled_entry(parent, label_text):
-    tb.Label(parent, text=label_text).pack(anchor=W, pady=5)
-    entry = tb.Entry(parent)
-    entry.pack(fill=X)
-    return entry
-
 entry_S = add_labeled_entry(tab1, "Underlying Price (S):")
 entry_K = add_labeled_entry(tab1, "Strike Price (K):")
 entry_T = add_labeled_entry(tab1, "Time to Expiry (in days, T):")
@@ -71,7 +201,7 @@ tb.Label(tab1, text="Option Type:").pack(anchor=W, pady=5)
 option_type_var = tk.StringVar(value="call")
 tb.Combobox(tab1, textvariable=option_type_var, values=["call", "put"]).pack(fill=X)
 
-tb.Button(tab1, text="Calculate Mispricing", bootstyle=SUCCESS, command=calculate_mispricing).pack(pady=15)
+tb.Button(tab1, text="Calculate Mispricing", command=calculate_mispricing).pack(pady=15)
 result_var = tk.StringVar()
 tb.Label(tab1, textvariable=result_var, font=("Segoe UI", 12, "bold")).pack()
 
@@ -81,9 +211,6 @@ notebook.add(tab2, text="Option Screener")
 
 tb.Label(tab2, text="Option screener functionality coming soon...", font=("Segoe UI", 11)).pack(pady=50)
 
-# ------------------- TAB 3: Spread Creator ------------------
-from PIL import Image, ImageTk
-import os
 
 # --- TAB 3: Spread Optimizer ---
 tab3 = tb.Frame(notebook, padding=20)
@@ -208,25 +335,6 @@ spread_descriptions = {
     )
 }
 
-# Load and update image
-def update_image(strategy):
-    image_path = f"spreads/{strategy.replace(' ', '_').lower()}.png"
-    if os.path.exists(image_path):
-        img = Image.open(image_path).resize((400, 250))
-        photo = ImageTk.PhotoImage(img)
-        image_label.config(image=photo)
-        image_label.image = photo
-    else:
-        image_label.config(image="", text="No image available.")
-
-# Description and image update
-def update_description(*args):
-    selected = spread_var.get()
-    desc = spread_descriptions.get(selected, "Description coming soon...")
-    description_text.delete("1.0", tk.END)
-    description_text.insert(tk.END, desc)
-    update_image(selected)
-
 # Initialize
 spread_var.trace_add("write", update_description)
 update_description()
@@ -241,48 +349,15 @@ tb.Label(tab4, text="Select Spread Type:", font=("Segoe UI", 10)).pack(anchor=W,
 spread_type_var = tk.StringVar(value="Vertical Call Spread")
 tb.Combobox(tab4, textvariable=spread_type_var, values=["Vertical Call Spread", "Vertical Put Spread"]).pack(fill=X)
 
-def labeled_entry(parent, label):
-    tb.Label(parent, text=label).pack(anchor=W, pady=(10, 2))
-    e = tb.Entry(parent)
-    e.pack(fill=X)
-    return e
 
 entry_K1 = labeled_entry(tab4, "Buy Strike (K1):")
 entry_K2 = labeled_entry(tab4, "Sell Strike (K2):")
 entry_P1 = labeled_entry(tab4, "Buy Premium (P1):")
 entry_P2 = labeled_entry(tab4, "Sell Premium (P2):")
 
-# ---- Payoff Plotting Function ----
-def plot_spread_payoff():
-    try:
-        K1 = float(entry_K1.get())
-        K2 = float(entry_K2.get())
-        P1 = float(entry_P1.get())
-        P2 = float(entry_P2.get())
-        spread_type = spread_type_var.get()
-
-        S = np.linspace(min(K1, K2) - 20, max(K1, K2) + 20, 200)
-        if spread_type == "Vertical Call Spread":
-            payoff = np.maximum(S - K1, 0) - P1 - (np.maximum(S - K2, 0) - P2)
-        elif spread_type == "Vertical Put Spread":
-            payoff = (np.maximum(K2 - S, 0) - P2) - (np.maximum(K1 - S, 0) - P1)
-        else:
-            payoff = np.zeros_like(S)
-
-        ax.clear()
-        ax.plot(S, payoff, label="Payoff", color="cyan")
-        ax.axhline(0, color="gray", linestyle="--", linewidth=0.8)
-        ax.set_title(f"{spread_type} Payoff")
-        ax.set_xlabel("Stock Price at Expiration")
-        ax.set_ylabel("Profit / Loss")
-        ax.grid(True)
-        ax.legend()
-        canvas.draw()
-    except ValueError:
-        pass
 
 # ---- Button ----
-tb.Button(tab4, text="Plot Payoff", bootstyle=SUCCESS, command=plot_spread_payoff).pack(pady=10)
+tb.Button(tab4, text="Plot Payoff", command=plot_spread_payoff).pack(pady=10)
 
 # ---- Matplotlib Canvas ----
 fig, ax = plt.subplots(figsize=(6, 4), dpi=100)
@@ -311,43 +386,9 @@ for col in columns:
     tree.column(col, anchor="center")
 tree.pack(fill="both", expand=True)
 
-def load_expirations():
-    ticker = symbol_var.get().strip().upper()
-    print(f"Fetching expirations for {ticker}")  # 👈 DEBUG
-    if not ticker:
-        return
-    try:
-        stock = yf.Ticker(ticker)
-        expirations = stock.options
-        print("Expirations:", expirations)  # 👈 DEBUG
-        expiration_menu["values"] = expirations
-        if expirations:
-            expiration_var.set(expirations[0])
-    except Exception as e:
-        print("Error loading expirations:", e)
-        expiration_menu["values"] = []
-        expiration_var.set("")
-        
-def load_chain():
-    tree.delete(*tree.get_children())
-    ticker = symbol_var.get().strip().upper()
-    expiration = expiration_var.get()
-    if not ticker or not expiration:
-        return
-    try:
-        stock = yf.Ticker(ticker)
-        chain = stock.option_chain(expiration)
-        calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
-        for _, row in calls.iterrows():
-            tree.insert("", tk.END, values=(
-                row["strike"], row["bid"], row["ask"],
-                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
-            ))
-    except Exception as e:
-        print("Error loading chain:", e)
 
-tb.Button(tab5, text="Load Expirations", bootstyle=INFO, command=load_expirations).pack(pady=5)
-tb.Button(tab5, text="Load Option Chain", bootstyle=PRIMARY, command=load_chain).pack(pady=(0, 10))
+tb.Button(tab5, text="Load Expirations", command=load_expirations).pack(pady=5)
+tb.Button(tab5, text="Load Option Chain", command=load_chain).pack(pady=(0, 10))
 
 # Start app
 app.mainloop()
