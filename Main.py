@@ -7,6 +7,7 @@ import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import yfinance as yf
+import pandas as pd
 
 from PIL import Image, ImageTk
 import os
@@ -151,37 +152,62 @@ def load_expirations():
         expiration_menu["values"] = expirations
         if expirations:
             expiration_var.set(expirations[0])
+            load_chain()
     except Exception as e:
         print("Error loading expirations:", e)
         expiration_menu["values"] = []
         expiration_var.set("")
 
 
+
 def load_chain():
     call_tree.delete(*call_tree.get_children())
     put_tree.delete(*put_tree.get_children())
+
     ticker = symbol_var.get().strip().upper()
     expiration = expiration_var.get()
     if not ticker or not expiration:
         return
+
     try:
         stock = yf.Ticker(ticker)
         chain = stock.option_chain(expiration)
         calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
         puts = chain.puts[["strike", "bid", "ask", "impliedVolatility", "volume"]]
 
+        # Get current stock price and risk-free rate
+        hist = stock.history(period="1d")
+        if hist.empty:
+            return
+        current_price = hist["Close"][-1]
+        r = 0.05  # Hardcoded risk-free rate
+        T = (pd.to_datetime(expiration) - pd.Timestamp.today()).days / 365.0
+
         for _, row in calls.iterrows():
+            K = row["strike"]
+            sigma = row["impliedVolatility"]
+            delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "call")
+
             call_tree.insert("", tk.END, values=(
-                row["strike"], row["bid"], row["ask"],
-                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
+                K, row["bid"], row["ask"],
+                f"{sigma*100:.2f}%", row["volume"],
+                f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
             ))
+
         for _, row in puts.iterrows():
+            K = row["strike"]
+            sigma = row["impliedVolatility"]
+            delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "put")
+
             put_tree.insert("", tk.END, values=(
-                row["strike"], row["bid"], row["ask"],
-                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
+                K, row["bid"], row["ask"],
+                f"{sigma*100:.2f}%", row["volume"],
+                f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
             ))
+
     except Exception as e:
         print("Error loading chain:", e)
+
 
 
 def init_app():
@@ -190,7 +216,7 @@ def init_app():
 # --- GUI Setup ---
 app = tb.Window(themename="darkly")
 app.title("Options Tools")
-app.geometry("600x450")
+app.geometry("1080x1920")
 
 notebook = ttk.Notebook(app)
 notebook.pack(fill=BOTH, expand=True)
@@ -384,17 +410,18 @@ expiration_var = tk.StringVar()
 tb.Label(tab5, text="Ticker Symbol:").pack(anchor=W, pady=(0, 2))
 symbol_entry = tb.Entry(tab5, textvariable=symbol_var)
 symbol_entry.pack(fill=X)
+symbol_entry.bind("<Return>", lambda e: load_expirations())  # Enter to load expirations
 
 expiration_menu = ttk.Combobox(tab5, textvariable=expiration_var)
 expiration_menu.pack(fill=X, pady=(10, 5))
+expiration_menu.bind("<<ComboboxSelected>>", lambda e: load_chain())  # Change expiration triggers reload
 
 # --- Option Tables ---
-columns = ("Strike", "Bid", "Ask", "IV", "Volume")
+columns = ("Strike", "Bid", "Ask", "IV", "Volume", "Delta", "Gamma", "Theta", "Vega", "Rho")
 
 frame = tb.Frame(tab5)
 frame.pack(fill=BOTH, expand=True, pady=10)
 
-# Configure grid behavior
 frame.grid_rowconfigure(1, weight=1)
 frame.grid_columnconfigure(0, weight=1)
 frame.grid_columnconfigure(1, weight=1)
@@ -418,13 +445,6 @@ for col in columns:
     put_tree.heading(col, text=col)
     put_tree.column(col, anchor="center", width=80)
 put_tree.grid(row=1, column=1, sticky="nsew", padx=10)
-
-# --- Load Buttons ---
-button_frame = tb.Frame(tab5)
-button_frame.pack(pady=10)
-
-tb.Button(button_frame, text="Load Expirations", command=load_expirations).pack(side=LEFT, padx=5)
-tb.Button(button_frame, text="Load Option Chain", command=load_chain).pack(side=LEFT, padx=5)
 
 # Start app
 app.mainloop()
