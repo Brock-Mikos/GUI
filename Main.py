@@ -158,7 +158,8 @@ def load_expirations():
 
 
 def load_chain():
-    tree.delete(*tree.get_children())
+    call_tree.delete(*call_tree.get_children())
+    put_tree.delete(*put_tree.get_children())
     ticker = symbol_var.get().strip().upper()
     expiration = expiration_var.get()
     if not ticker or not expiration:
@@ -167,13 +168,21 @@ def load_chain():
         stock = yf.Ticker(ticker)
         chain = stock.option_chain(expiration)
         calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+        puts = chain.puts[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+
         for _, row in calls.iterrows():
-            tree.insert("", tk.END, values=(
+            call_tree.insert("", tk.END, values=(
+                row["strike"], row["bid"], row["ask"],
+                f"{row['impliedVolatility']*100:.2f}%", row["volume"]
+            ))
+        for _, row in puts.iterrows():
+            put_tree.insert("", tk.END, values=(
                 row["strike"], row["bid"], row["ask"],
                 f"{row['impliedVolatility']*100:.2f}%", row["volume"]
             ))
     except Exception as e:
         print("Error loading chain:", e)
+
 
 def init_app():
     return
@@ -201,7 +210,7 @@ tb.Label(tab1, text="Option Type:").pack(anchor=W, pady=5)
 option_type_var = tk.StringVar(value="call")
 tb.Combobox(tab1, textvariable=option_type_var, values=["call", "put"]).pack(fill=X)
 
-tb.Button(tab1, text="Calculate Mispricing", command=calculate_mispricing).pack(pady=15)
+tb.Button(tab1, bootstyle="success",text="Calculate Mispricing", command=calculate_mispricing).pack(pady=15)
 result_var = tk.StringVar()
 tb.Label(tab1, textvariable=result_var, font=("Segoe UI", 12, "bold")).pack()
 
@@ -379,16 +388,43 @@ symbol_entry.pack(fill=X)
 expiration_menu = ttk.Combobox(tab5, textvariable=expiration_var)
 expiration_menu.pack(fill=X, pady=(10, 5))
 
+# --- Option Tables ---
 columns = ("Strike", "Bid", "Ask", "IV", "Volume")
-tree = ttk.Treeview(tab5, columns=columns, show="headings", height=15)
+
+frame = tb.Frame(tab5)
+frame.pack(fill=BOTH, expand=True, pady=10)
+
+# Configure grid behavior
+frame.grid_rowconfigure(1, weight=1)
+frame.grid_columnconfigure(0, weight=1)
+frame.grid_columnconfigure(1, weight=1)
+
+# Calls Table
+call_label = tb.Label(frame, text="Calls", anchor="center", font=("Segoe UI", 10, "bold"))
+call_label.grid(row=0, column=0, sticky="n", padx=10)
+
+call_tree = ttk.Treeview(frame, columns=columns, show="headings")
 for col in columns:
-    tree.heading(col, text=col)
-    tree.column(col, anchor="center")
-tree.pack(fill="both", expand=True)
+    call_tree.heading(col, text=col)
+    call_tree.column(col, anchor="center", width=80)
+call_tree.grid(row=1, column=0, sticky="nsew", padx=10)
 
+# Puts Table
+put_label = tb.Label(frame, text="Puts", anchor="center", font=("Segoe UI", 10, "bold"))
+put_label.grid(row=0, column=1, sticky="n", padx=10)
 
-tb.Button(tab5, text="Load Expirations", command=load_expirations).pack(pady=5)
-tb.Button(tab5, text="Load Option Chain", command=load_chain).pack(pady=(0, 10))
+put_tree = ttk.Treeview(frame, columns=columns, show="headings")
+for col in columns:
+    put_tree.heading(col, text=col)
+    put_tree.column(col, anchor="center", width=80)
+put_tree.grid(row=1, column=1, sticky="nsew", padx=10)
+
+# --- Load Buttons ---
+button_frame = tb.Frame(tab5)
+button_frame.pack(pady=10)
+
+tb.Button(button_frame, text="Load Expirations", command=load_expirations).pack(side=LEFT, padx=5)
+tb.Button(button_frame, text="Load Option Chain", command=load_chain).pack(side=LEFT, padx=5)
 
 # Start app
 app.mainloop()
