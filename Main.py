@@ -274,8 +274,24 @@ spread_options = [
     "Iron Butterfly",
     "Ratio Spread",
     "Covered Call",
-    "Protective Put"
+    "Protective Put",
+    "Diagonal Spread",
+    "Butterfly Spread",
+    "Box Spread",
+    "Collar",
+    "Synthetic Long Stock",
+    "Reverse Iron Condor",
+    "Jade Lizard",
+    "Reverse Jade Lizard",
+    "Call Backspread",
+    "Put Backspread",
+    "Broken Wing Butterfly",
+    "Unbalanced Condor",
+    "Double Diagonal",
+    "Christmas Tree Spread",
+    "Lizard Spread"
 ]
+
 tb.Combobox(tab3, textvariable=spread_var, values=spread_options).pack(fill=X)
 
 # Multiline text output
@@ -377,7 +393,145 @@ spread_descriptions = {
         "• Max Loss: Limited to (stock price - strike + premium).\n"
         "• Breakeven: Stock price + put premium.\n"
         "• Like insurance: caps losses, keeps upside."
+    ),
+    "Diagonal Spread": (
+        "🔹 **Diagonal Spread**\n"
+        "• Structure: Buy longer-dated option, sell shorter-dated option (different strikes).\n"
+        "• View: Directional with a time-decay advantage.\n"
+        "• Max Profit: When stock is at short strike near short expiry.\n"
+        "• Max Loss: Net debit paid.\n"
+        "• Benefit: Combines vertical and calendar spread features.\n"
+        "• Great when expecting a short-term move followed by consolidation."
+    ),
+    "Butterfly Spread": (
+        "🔹 **Butterfly Spread**\n"
+        "• Structure: Buy 1 lower strike, sell 2 middle strikes, buy 1 higher strike (same expiry).\n"
+        "• View: Neutral — expect low movement.\n"
+        "• Max Profit: At middle strike at expiration.\n"
+        "• Max Loss: Net debit paid.\n"
+        "• Breakevens: Lower strike + net debit, higher strike - net debit.\n"
+        "• Low cost strategy to profit from low volatility."
+    ),
+    "Box Spread": (
+        "🔹 **Box Spread**\n"
+        "• Structure: Bull call spread + bear put spread (same strikes and expiry).\n"
+        "• View: Arbitrage (theoretically riskless).\n"
+        "• Max Profit: Fixed—difference between strikes.\n"
+        "• Max Loss: Only if mispriced or commissions impact trade.\n"
+        "• Used by pros for synthetic lending or arbitrage.\n"
+        "• Not directional—pure pricing play."
+    ),
+    "Collar": (
+        "🔹 **Collar**\n"
+        "• Structure: Own stock, buy protective put, sell covered call.\n"
+        "• View: Conservative bullish — capped gain, limited loss.\n"
+        "• Max Profit: Strike of call - purchase price + net premium.\n"
+        "• Max Loss: Purchase price - put strike - net premium.\n"
+        "• Breakeven: Stock price + net premium paid/received.\n"
+        "• Ideal for hedging while generating income."
+    ),
+    "Synthetic Long Stock": (
+        "🔹 **Synthetic Long Stock**\n"
+        "• Structure: Buy 1 call, sell 1 put (same strike and expiry).\n"
+        "• View: Bullish, same as owning the stock.\n"
+        "• Max Profit: Unlimited.\n"
+        "• Max Loss: Large if stock drops significantly.\n"
+        "• Breakeven: Strike ± net premium.\n"
+        "• Acts like long stock with less capital outlay, but same risk."
+    ),
+        "Reverse Iron Condor": (
+        "🔹 **Reverse Iron Condor**\n"
+        "• Structure: Buy OTM call and put, sell further OTM call and put (4 legs).\n"
+        "• View: Expect large move in either direction.\n"
+        "• Max Profit: Width of spreads - net debit.\n"
+        "• Max Loss: Net debit paid.\n"
+        "• Breakevens: Lower call - debit, higher put + debit.\n"
+        "• Opposite of iron condor—used when expecting volatility breakout."
+    ),
+    "Jade Lizard": (
+        "🔹 **Jade Lizard**\n"
+        "• Structure: Sell OTM call spread and OTM put (3 legs).\n"
+        "• View: Neutral to bullish.\n"
+        "• Max Profit: Net credit received.\n"
+        "• Max Loss: Unlimited on downside if put is breached.\n"
+        "• Breakeven: Put strike - net credit.\n"
+        "• Designed to avoid upside risk—no risk if stock rallies hard."
+    ),
+    "Reverse Jade Lizard": (
+        "🔹 **Reverse Jade Lizard**\n"
+        "• Structure: Sell OTM put spread and OTM call.\n"
+        "• View: Neutral to bearish.\n"
+        "• Max Profit: Net credit received.\n"
+        "• Max Loss: Unlimited on upside if call is breached.\n"
+        "• Breakeven: Call strike + credit.\n"
+        "• Bearish version of Jade Lizard—avoids downside risk."
+    ),
+    "Call Backspread": (
+        "🔹 **Call Backspread**\n"
+        "• Structure: Sell 1 lower strike call, buy 2 higher strike calls (same expiry).\n"
+        "• View: Very bullish with volatility edge.\n"
+        "• Max Profit: Unlimited if stock surges.\n"
+        "• Max Loss: If stock hovers near short call.\n"
+        "• Breakevens: Depends on ratio; typically lower strike + debit.\n"
+        "• Best when expecting strong upside breakout."
+    ),
+    "Put Backspread": (
+        "🔹 **Put Backspread**\n"
+        "• Structure: Sell 1 higher strike put, buy 2 lower strike puts (same expiry).\n"
+        "• View: Very bearish with volatility edge.\n"
+        "• Max Profit: Significant if stock crashes.\n"
+        "• Max Loss: If stock stays near short put.\n"
+        "• Breakevens: Depends on ratio; typically higher strike - debit.\n"
+        "• Profits most when volatility spikes and price collapses."
+    ),
+        "Broken Wing Butterfly": (
+        "🔹 **Broken Wing Butterfly**\n"
+        "• Structure: Like a butterfly, but one wing is wider (uneven strikes).\n"
+        "• View: Neutral to slightly directional (depends on skew).\n"
+        "• Max Profit: When stock closes near middle strike.\n"
+        "• Max Loss: Reduced on one side (compared to regular butterfly).\n"
+        "• Breakevens: Adjusted based on wing width and credit/debit.\n"
+        "• Can be placed for a credit to reduce or eliminate max loss."
+    ),
+    "Unbalanced Condor": (
+        "🔹 **Unbalanced Condor**\n"
+        "• Structure: 4-leg condor with different quantities on each side.\n"
+        "• View: Range-bound with skewed probability bias.\n"
+        "• Max Profit: Net credit received.\n"
+        "• Max Loss: Defined by wider side of the spread.\n"
+        "• Breakevens: Based on skew and net credit.\n"
+        "• Used when IV skew favors one side more than the other."
+    ),
+    "Double Diagonal": (
+        "🔹 **Double Diagonal**\n"
+        "• Structure: Calendar + vertical on both call and put sides (4 legs).\n"
+        "• View: Neutral with long volatility bias.\n"
+        "• Max Profit: When underlying closes between short strikes.\n"
+        "• Max Loss: Net debit paid.\n"
+        "• Breakevens: Wide range around short strikes.\n"
+        "• Great for range-bound stocks expected to gain IV."
+    ),
+    "Christmas Tree Spread": (
+        "🔹 **Christmas Tree Spread**\n"
+        "• Structure: Variation of butterfly/backspread with more contracts on one wing.\n"
+        "• View: Directional but controlled risk.\n"
+        "• Max Profit: Typically near clustered strikes.\n"
+        "• Max Loss: Net debit or defined by outer strikes.\n"
+        "• Breakevens: Varies—dependent on structure.\n"
+        "• Creative structure to express a skewed directional view."
+    ),
+    "Lizard Spread": (
+        "🔹 **Lizard Spread**\n"
+        "• Structure: Variation of a ratio spread with no risk on one side.\n"
+        "• View: Neutral to bullish.\n"
+        "• Max Profit: Net credit received.\n"
+        "• Max Loss: Only if price moves strongly in one direction.\n"
+        "• Breakevens: Based on strike distance and credit.\n"
+        "• Great for earnings plays with skewed IV."
     )
+
+
+
 }
 
 # Initialize
