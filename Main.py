@@ -8,9 +8,11 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import yfinance as yf
 import pandas as pd
-
+from matplotlib.figure import Figure
 from PIL import Image, ImageTk
 import os
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # --- Black-Scholes pricing function ---
 def black_scholes_price(S, K, T, r, sigma, option_type='call'):
@@ -217,8 +219,162 @@ def load_chain():
     except Exception as e:
         print("Error loading chain:", e)
 
+def update_expiration_checkboxes():
+    for widget in expiration_filter_frame.winfo_children():
+        widget.destroy()
+    for exp in sorted(temp_loaded_option_data.keys()):
+        var = tk.BooleanVar(value=True)
+        cb = tb.Checkbutton(expiration_filter_frame, text=exp, variable=var)
+        cb.pack(side=LEFT, padx=5)
+        expiration_vars[exp] = var
 
+# Plotting Function: Skew
 
+def plot_volatility_skew():
+    ax_skew.clear()
+    df = get_chain_dataframe(include_expiration=True)
+    if df is None or df.empty:
+        return
+
+    selected_type = option_type_skew.get()
+    if selected_type != "both":
+        df = df[df["type"] == selected_type]
+
+    active_exps = [exp for exp, var in expiration_vars.items() if var.get()]
+    df = df[df['expiration'].isin(active_exps)]
+
+    if df.empty:
+        return
+
+    palette = sns.color_palette("hls", len(active_exps))
+    for i, exp in enumerate(active_exps):
+        exp_df = df[df['expiration'] == exp]
+        ax_skew.plot(exp_df['strike'], exp_df['impliedVolatility'] * 100, label=exp, marker='o', linestyle='-')
+
+    ax_skew.set_title(f"Volatility Skew ({selected_type.capitalize()})")
+    ax_skew.set_xlabel("Strike")
+    ax_skew.set_ylabel("IV (%)")
+    ax_skew.grid(True)
+    ax_skew.legend()
+    skew_canvas.draw()
+
+# Plotting Function: Term Structure
+
+def plot_term_structure():
+    ax_skew.clear()
+    df = get_chain_dataframe(include_expiration=True)
+    if df is None or df.empty:
+        return
+
+    selected_type = option_type_skew.get()
+    if selected_type != "both":
+        df = df[df["type"] == selected_type]
+
+    active_exps = [exp for exp, var in expiration_vars.items() if var.get()]
+    df = df[df['expiration'].isin(active_exps)]
+
+    if df.empty:
+        return
+
+    # Compute average IV per expiration (filter to near ATM if needed)
+    term_df = df.groupby('expiration')['impliedVolatility'].mean().reset_index()
+    term_df['expiration_date'] = pd.to_datetime(term_df['expiration'])
+    term_df = term_df.sort_values('expiration_date')
+
+    ax_skew.plot(term_df['expiration_date'], term_df['impliedVolatility'] * 100, marker='o', linestyle='-')
+    ax_skew.set_title("Term Structure of Implied Volatility")
+    ax_skew.set_xlabel("Expiration Date")
+    ax_skew.set_ylabel("Average IV (%)")
+    ax_skew.grid(True)
+    skew_canvas.draw()
+
+# Helper to convert Treeview to DataFrame
+
+def get_chain_dataframe(include_expiration=False):
+    try:
+        dfs = []
+        for exp, df in temp_loaded_option_data.items():
+            df = df.copy()
+            if include_expiration:
+                df['expiration'] = exp
+            dfs.append(df)
+
+        if not dfs:
+            return None
+
+        full_df = pd.concat(dfs, ignore_index=True)
+        full_df["strike"] = pd.to_numeric(full_df["strike"], errors='coerce')
+        full_df["iv"] = full_df["iv"].astype(str)
+        full_df["impliedVolatility"] = pd.to_numeric(full_df["iv"].str.replace('%', ''), errors='coerce') / 100
+
+        return full_df.dropna(subset=["strike", "impliedVolatility"])
+    except Exception as e:
+        print("Error building skew DataFrame:", e)
+        return None
+
+# REPLACEMENT load_chain
+
+def load_chain():
+    call_tree.delete(*call_tree.get_children())
+    put_tree.delete(*put_tree.get_children())
+
+    ticker = symbol_var.get().strip().upper()
+    expiration = expiration_var.get()
+    if not ticker or not expiration:
+        return
+
+    try:
+        stock = yf.Ticker(ticker)
+        chain = stock.option_chain(expiration)
+        calls = chain.calls[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+        puts = chain.puts[["strike", "bid", "ask", "impliedVolatility", "volume"]]
+
+        hist = stock.history(period="1d")
+        if hist.empty:
+            return
+        current_price = hist["Close"][-1]
+        r = 0.05
+        T = (pd.to_datetime(expiration) - pd.Timestamp.today()).days / 365.0
+
+        call_tree.tag_configure("atm", background="#1f77b4")
+        put_tree.tag_configure("atm", background="#ff7f0e")
+        all_strikes = sorted(set(calls["strike"]).union(set(puts["strike"])))
+        atm_strike = min(all_strikes, key=lambda x: abs(x - current_price))
+
+        for _, row in calls.iterrows():
+            K = row["strike"]
+            sigma = row["impliedVolatility"]
+            delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "call")
+            tag = "atm" if abs(K - atm_strike) < 0.01 else ""
+            call_tree.insert("", tk.END, values=(
+                K, row["bid"], row["ask"],
+                f"{sigma*100:.2f}%", row["volume"],
+                f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
+            ), tags=(tag,))
+
+        for _, row in puts.iterrows():
+            K = row["strike"]
+            sigma = row["impliedVolatility"]
+            delta, gamma, theta, vega, rho = calculate_greeks(current_price, K, T, r, sigma, "put")
+            tag = "atm" if abs(K - atm_strike) < 0.01 else ""
+            put_tree.insert("", tk.END, values=(
+                K, row["bid"], row["ask"],
+                f"{sigma*100:.2f}%", row["volume"],
+                f"{delta:.2f}", f"{gamma:.2f}", f"{theta:.2f}", f"{vega:.2f}", f"{rho:.2f}"
+            ), tags=(tag,))
+
+        # Store data for skew tab
+        calls = calls.copy()
+        puts = puts.copy()
+        calls["type"] = "call"
+        puts["type"] = "put"
+        df = pd.concat([calls, puts], ignore_index=True)
+        df.rename(columns={"impliedVolatility": "iv"}, inplace=True)
+        temp_loaded_option_data[expiration] = df
+        update_expiration_checkboxes()
+
+    except Exception as e:
+        print("Error loading chain:", e)
 
 def init_app():
     return
@@ -611,6 +767,42 @@ for col in columns:
     put_tree.heading(col, text=col)
     put_tree.column(col, anchor="center", width=80)
 put_tree.grid(row=1, column=1, sticky="nsew", padx=10)
+#------------- TAB 6: Vol Skew / Term structure ------------------
+# Create new tab
+tab6 = tb.Frame(notebook, padding=20)
+notebook.add(tab6, text="Volatility Skew")
+
+# Controls Frame
+controls = tb.Frame(tab6)
+controls.pack(fill=X, pady=(0, 10))
+
+# Dropdown for option type
+option_type_skew = tk.StringVar(value="call")
+tb.Label(controls, text="Option Type:").pack(side=LEFT, padx=(0, 5))
+tb.Combobox(controls, textvariable=option_type_skew, values=["call", "put", "both"], width=10).pack(side=LEFT)
+
+# Expiration filtering (multi-select)
+expiration_filter_frame = tb.Frame(tab6)
+expiration_filter_frame.pack(fill=X)
+expiration_vars = {}
+
+# Store loaded chains for each expiration
+temp_loaded_option_data = {}
+
+# Button to plot skew
+plot_button = tb.Button(controls, text="Plot Skew", command=lambda: plot_volatility_skew())
+plot_button.pack(side=LEFT, padx=10)
+
+# Button to plot term structure
+term_button = tb.Button(controls, text="Term Structure", command=lambda: plot_term_structure())
+term_button.pack(side=LEFT, padx=10)
+
+# Matplotlib area
+fig_skew = Figure(figsize=(6, 4), dpi=100)
+ax_skew = fig_skew.add_subplot(111)
+skew_canvas = FigureCanvasTkAgg(fig_skew, master=tab6)
+skew_canvas.get_tk_widget().pack(fill=BOTH, expand=True)
+
 
 
 # Start app
