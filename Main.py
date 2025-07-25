@@ -376,6 +376,82 @@ def load_chain():
     except Exception as e:
         print("Error loading chain:", e)
 
+# Plot Function: Put/Call IV Ratio
+
+def plot_put_call_iv_ratio():
+    ax_ratio.clear()
+    df = get_chain_dataframe(include_expiration=True)
+    if df is None or df.empty:
+        return
+
+    active_exps = [exp for exp, var in expiration_vars.items() if var.get()]
+    df = df[df['expiration'].isin(active_exps)]
+
+    if df.empty:
+        return
+
+    # Filter extreme or invalid IVs
+    df = df[(df['impliedVolatility'] > 0) & (df['impliedVolatility'] < 5)]
+
+    # Group by strike and expiration
+    calls = df[df['type'] == 'call'][['strike', 'expiration', 'impliedVolatility']].rename(columns={'impliedVolatility': 'call_iv'})
+    puts = df[df['type'] == 'put'][['strike', 'expiration', 'impliedVolatility']].rename(columns={'impliedVolatility': 'put_iv'})
+
+    merged = pd.merge(calls, puts, on=['strike', 'expiration'])
+    merged = merged[(merged['call_iv'] > 0) & (merged['put_iv'] > 0)]
+    merged['iv_ratio'] = merged['put_iv'] / merged['call_iv']
+
+    # Remove outliers (e.g. ratio > 5x)
+    merged = merged[np.isfinite(merged['iv_ratio']) & (merged['iv_ratio'] < 5)]
+
+    for exp in sorted(merged['expiration'].unique()):
+        exp_df = merged[merged['expiration'] == exp]
+        ax_ratio.plot(exp_df['strike'], exp_df['iv_ratio'], label=exp, marker='o')
+
+    ax_ratio.set_title("Put/Call IV Ratio by Strike")
+    ax_ratio.set_xlabel("Strike")
+    ax_ratio.set_ylabel("Put IV / Call IV")
+    ax_ratio.grid(True)
+    ax_ratio.legend()
+    ratio_canvas.draw()
+# Button to open expiration selector
+def open_expiration_selector():
+    popup = tk.Toplevel()
+    popup.title("Select Expirations")
+    popup.geometry("250x300")
+    popup.grab_set()
+
+    # Scrollable checkbox area
+    canvas = tk.Canvas(popup)
+    frame = ttk.Frame(canvas)
+    scrollbar = ttk.Scrollbar(popup, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    scrollbar.pack(side="right", fill="y")
+    canvas.pack(side="left", fill="both", expand=True)
+    canvas.create_window((0, 0), window=frame, anchor="nw")
+
+    def on_frame_configure(event):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    frame.bind("<Configure>", on_frame_configure)
+
+    # Build checkboxes
+    for exp in sorted(temp_loaded_option_data.keys()):
+        var = tk.BooleanVar(value=(exp in selected_iv_expirations))
+        cb = ttk.Checkbutton(frame, text=exp, variable=var)
+        cb.pack(anchor="w", padx=10)
+        iv_checkbox_vars[exp] = var
+
+    def apply_selection():
+        selected_iv_expirations.clear()
+        for exp, var in iv_checkbox_vars.items():
+            if var.get():
+                selected_iv_expirations.add(exp)
+        popup.destroy()
+
+    ttk.Button(popup, text="Apply", command=apply_selection).pack(pady=10)
+
 def init_app():
     return
 
@@ -803,7 +879,30 @@ ax_skew = fig_skew.add_subplot(111)
 skew_canvas = FigureCanvasTkAgg(fig_skew, master=tab6)
 skew_canvas.get_tk_widget().pack(fill=BOTH, expand=True)
 
+# --- TAB 7: Put/Call IV Ratio ---
+tab7 = tb.Frame(notebook, padding=20)
+notebook.add(tab7, text="Put/Call IV Ratio")
 
+# Controls
+iv_ratio_controls = tb.Frame(tab7)
+iv_ratio_controls.pack(fill=X, pady=(0, 10))
+
+# Shared expiration state
+selected_iv_expirations = set()
+iv_checkbox_vars = {}
+
+# Button to launch selector
+ttk.Button(iv_ratio_controls, text="Select Expirations", command=open_expiration_selector).pack(side=LEFT, padx=5)
+
+# Button to plot
+iv_ratio_button = tb.Button(iv_ratio_controls, text="Plot IV Ratio", command=lambda: plot_put_call_iv_ratio())
+iv_ratio_button.pack(side=LEFT, padx=10)
+
+# Plot Area
+fig_ratio = Figure(figsize=(6, 4), dpi=100)
+ax_ratio = fig_ratio.add_subplot(111)
+ratio_canvas = FigureCanvasTkAgg(fig_ratio, master=tab7)
+ratio_canvas.get_tk_widget().pack(fill=BOTH, expand=True)
 
 # Start app
 app.mainloop()
