@@ -13,6 +13,9 @@ from PIL import Image, ImageTk
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+from matplotlib.figure import Figure
+
+
 
 # --- Black-Scholes pricing function ---
 def black_scholes_price(S, K, T, r, sigma, option_type='call'):
@@ -451,6 +454,231 @@ def open_expiration_selector():
         popup.destroy()
 
     ttk.Button(popup, text="Apply", command=apply_selection).pack(pady=10)
+
+# Load expirations
+def load_builder_expirations():
+    try:
+        symbol = builder_symbol.get().strip().upper()
+        stock = yf.Ticker(symbol)
+        exps = stock.options
+        builder_exp_menu["values"] = exps
+        if exps:
+            builder_expiration_var.set(exps[0])
+            load_builder_strikes()
+    except Exception as e:
+        print("Error loading expirations:", e)
+
+def load_builder_strikes():
+    symbol = builder_symbol.get().strip().upper()
+    expiration = builder_expiration_var.get()
+    if not symbol or not expiration:
+        return
+    try:
+        stock = yf.Ticker(symbol)
+        chain = stock.option_chain(expiration)
+        strikes = sorted(set(chain.calls["strike"]).union(set(chain.puts["strike"])))
+        builder_strike_list.clear()
+        builder_strike_list.extend(strikes)
+        builder_strike_dropdown["values"] = strikes
+        if strikes:
+            builder_strike_var.set(strikes[len(strikes) // 2])
+    except Exception as e:
+        print("Error loading strikes:", e)
+
+# Add Leg
+def add_leg():
+    symbol = builder_symbol.get().strip().upper()
+    expiration = builder_expiration_var.get()
+    if not symbol or not expiration:
+        return
+
+    strike = float(builder_strike_var.get())
+    option_type = option_type_var.get()
+    side = side_var.get()
+    qty = int(qty_var.get())
+
+    try:
+        stock = yf.Ticker(symbol)
+        chain = stock.option_chain(expiration)
+        opt_df = chain.calls if option_type == "call" else chain.puts
+        row = opt_df[opt_df["strike"] == strike]
+        if row.empty:
+            return
+        bid = row["bid"].values[0]
+        ask = row["ask"].values[0]
+        price = (bid + ask) / 2
+
+        leg_tree.insert("", tk.END, values=(option_type, side, strike, qty, f"{price:.2f}"))
+        strategy_data.append((option_type, side, strike, qty, price))
+
+        plot_payoff()
+    except Exception as e:
+        print("Error adding leg:", e)
+
+# Remove leg
+def remove_leg():
+    selected = leg_tree.selection()
+    for item in selected:
+        index = leg_tree.index(item)
+        leg_tree.delete(item)
+        del strategy_data[index]
+    plot_payoff()
+
+# Reset strategy
+def reset_strategy():
+    for item in leg_tree.get_children():
+        leg_tree.delete(item)
+    strategy_data.clear()
+    plot_payoff()
+
+last_sim_marker = None
+
+def plot_payoff(mark_price=None, hud_data=None):
+    ax_builder.clear()
+    fig_builder.set_facecolor("#121212")
+    ax_builder.set_facecolor("#1a1a1a")
+
+    if not strategy_data:
+        builder_canvas.draw()
+        metrics_var.set("")
+        return
+
+    try:
+        current_price = yf.Ticker(builder_symbol.get().strip().upper()).history(period="1d")["Close"][-1]
+    except:
+        current_price = 100
+
+    prices = np.linspace(current_price * 0.5, current_price * 1.5, 300)
+    payoff = np.zeros_like(prices)
+
+    total_cost = 0
+
+    for leg in strategy_data:
+        opt_type, side, strike, qty, price = leg
+        qty = int(qty)
+        multiplier = 1 if side == "buy" else -1
+        total_cost += multiplier * qty * price * 100
+
+        if opt_type == "call":
+            leg_payoff = np.maximum(prices - strike, 0) - price
+        else:
+            leg_payoff = np.maximum(strike - prices, 0) - price
+
+        payoff += multiplier * qty * leg_payoff * 100
+
+    # Core payoff line
+    ax_builder.plot(prices, payoff, color="#00ffff", linewidth=2.2, label="Strategy Payoff", zorder=3)
+
+    # Fill areas
+    ax_builder.fill_between(prices, payoff, where=payoff > 0, color="#00ff00", alpha=0.25, zorder=1)
+    ax_builder.fill_between(prices, payoff, where=payoff < 0, color="#ff4444", alpha=0.25, zorder=1)
+
+    # Breakevens
+    breakevens = []
+    for i in range(1, len(payoff)):
+        if (payoff[i - 1] < 0 and payoff[i] >= 0) or (payoff[i - 1] > 0 and payoff[i] <= 0):
+            breakevens.append(prices[i])
+            ax_builder.axvline(prices[i], color="#ffff00", linestyle="--", alpha=0.8, linewidth=1)
+
+    max_profit = np.max(payoff)
+    max_loss = np.min(payoff)
+    risk_reward = abs(max_profit / max_loss) if max_loss != 0 else float("inf")
+
+    # Axes style
+    ax_builder.spines['top'].set_visible(False)
+    ax_builder.spines['right'].set_visible(False)
+    ax_builder.tick_params(colors='white')
+    ax_builder.xaxis.label.set_color('white')
+    ax_builder.yaxis.label.set_color('white')
+    ax_builder.title.set_color('white')
+
+    ax_builder.axhline(0, color="white", linewidth=1, linestyle="--", alpha=0.5)
+    ax_builder.set_title("Payoff at Expiration", fontsize=13, weight="bold")
+    ax_builder.set_xlabel("Underlying Price")
+    ax_builder.set_ylabel("Profit / Loss ($)")
+    ax_builder.grid(True, color="#333333", linestyle="--", linewidth=0.5)
+    ax_builder.set_axisbelow(True)
+
+    # Simulated price marker
+    if mark_price:
+        ax_builder.axvline(mark_price, color="#ff66ff", linestyle=":", linewidth=2, label="Sim Price", zorder=2)
+        ax_builder.legend(facecolor="#1a1a1a", edgecolor="gray", labelcolor="white")
+    else:
+        ax_builder.legend(facecolor="#1a1a1a", edgecolor="gray", labelcolor="white")
+
+    # Live metrics
+    sim_slider.config(from_=prices[0], to=prices[-1])
+    sim_price_var.set(current_price)
+
+    if hud_data:
+        box_text = "\n".join([
+            f"📍 {hud_data['Sim Price']}",
+            f"💰 {hud_data['PnL']}",
+            f"📈 {hud_data['Return']}",
+            f"🎯 {hud_data['Type']}"
+        ])
+        ax_builder.text(
+            0.02, 0.98, box_text,
+            transform=ax_builder.transAxes,
+            fontsize=10,
+            verticalalignment='top',
+            bbox=dict(facecolor="#222222", edgecolor="white", boxstyle="round,pad=0.5", alpha=0.9),
+            color="white",
+            zorder=10
+        )
+    
+    builder_canvas.draw()
+
+    metrics_var.set(
+        f"💵 Net {'Debit' if total_cost > 0 else 'Credit'}: ${abs(total_cost):,.2f}   "
+        f"📈 Max Profit: ${max_profit:,.2f}   "
+        f"⚠️ Max Loss: ${max_loss:,.2f}   "
+        f"📍 Breakeven(s): {', '.join(f'{b:.2f}' for b in breakevens)}   "
+        f"R:R ≈ {risk_reward:.2f}" if risk_reward != float("inf") else ""
+    )
+
+
+def update_sim_price():
+    global last_sim_marker
+
+    if not strategy_data or sim_price_var.get() == 0:
+        return
+
+    price = sim_price_var.get()
+    pnl = 0
+    total_cost = 0
+
+    for leg in strategy_data:
+        opt_type, side, strike, qty, cost = leg
+        qty = int(qty)
+        sign = 1 if side == "buy" else -1
+        total_cost += sign * qty * cost * 100
+
+        if opt_type == "call":
+            payoff = max(price - strike, 0) - cost
+        else:
+            payoff = max(strike - price, 0) - cost
+
+        pnl += payoff * qty * sign * 100
+
+    # % return
+    if total_cost != 0:
+        ret = (pnl / abs(total_cost)) * 100
+    else:
+        ret = 0
+
+    # Format display
+    sim_price_label.set(f"PnL: ${pnl:,.2f}")
+
+    # Replot with sim line and HUD box
+    plot_payoff(mark_price=price, hud_data={
+        "Sim Price": f"${price:,.2f}",
+        "PnL": f"{'+' if pnl >= 0 else ''}${pnl:,.2f}",
+        "Return": f"{ret:+.1f}%",
+        "Type": f"{'Net Debit' if total_cost > 0 else 'Net Credit'}"
+    })
+
+
 
 def init_app():
     return
@@ -903,6 +1131,99 @@ fig_ratio = Figure(figsize=(6, 4), dpi=100)
 ax_ratio = fig_ratio.add_subplot(111)
 ratio_canvas = FigureCanvasTkAgg(fig_ratio, master=tab7)
 ratio_canvas.get_tk_widget().pack(fill=BOTH, expand=True)
+
+# ------------------ TAB 8: Strategy Builder ------------------
+
+tab8 = tb.Frame(notebook, padding=20)
+notebook.add(tab8, text="Strategy Builder")
+
+
+# --- Widgets ---
+
+builder_controls = tb.Frame(tab8)
+builder_controls.pack(fill=X, pady=10)
+
+builder_legs = []
+strategy_data = []
+
+# Symbol input
+tb.Label(builder_controls, text="Ticker Symbol:").grid(row=0, column=0, sticky="w")
+builder_symbol = tb.Entry(builder_controls)
+builder_symbol.grid(row=0, column=1, padx=5)
+builder_symbol.insert(0, "AAPL")
+
+# Expiration dropdown
+tb.Label(builder_controls, text="Expiration:").grid(row=0, column=2, sticky="w")
+builder_expiration_var = tk.StringVar()
+builder_exp_menu = ttk.Combobox(builder_controls, textvariable=builder_expiration_var)
+builder_exp_menu.grid(row=0, column=3, padx=5)
+
+builder_symbol.bind("<Return>", lambda e: load_builder_expirations())
+builder_exp_menu.bind("<<ComboboxSelected>>", lambda e: load_builder_strikes())
+
+# Load strike prices
+builder_strike_list = []
+builder_strike_var = tk.DoubleVar()
+
+# Leg Form
+leg_frame = tb.Frame(tab8)
+leg_frame.pack(fill=X, pady=5)
+
+option_type_var = tk.StringVar(value="call")
+side_var = tk.StringVar(value="buy")
+qty_var = tk.IntVar(value=1)
+
+tb.Label(leg_frame, text="Option Type:").grid(row=0, column=0)
+tb.Combobox(leg_frame, textvariable=option_type_var, values=["call", "put"], width=10).grid(row=0, column=1)
+
+tb.Label(leg_frame, text="Buy/Sell:").grid(row=0, column=2)
+tb.Combobox(leg_frame, textvariable=side_var, values=["buy", "sell"], width=10).grid(row=0, column=3)
+
+tb.Label(leg_frame, text="Strike:").grid(row=0, column=4)
+builder_strike_dropdown = ttk.Combobox(leg_frame, textvariable=builder_strike_var, values=builder_strike_list, width=10)
+builder_strike_dropdown.grid(row=0, column=5)
+
+tb.Label(leg_frame, text="Qty:").grid(row=0, column=6)
+tb.Entry(leg_frame, textvariable=qty_var, width=5).grid(row=0, column=7)
+
+sim_price_var = tk.DoubleVar()
+sim_price_label = tk.StringVar()
+
+
+# Leg Table
+table_frame = tb.Frame(tab8)
+table_frame.pack(fill=X, pady=10)
+
+columns = ("Type", "Side", "Strike", "Qty", "Price")
+leg_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
+for col in columns:
+    leg_tree.heading(col, text=col)
+    leg_tree.column(col, width=80, anchor="center")
+leg_tree.pack(side=LEFT, fill="x", expand=True)
+
+tb.Button(leg_frame, text="Add Leg", command=add_leg).grid(row=0, column=8, padx=10)
+tb.Button(leg_frame, text="Remove Selected", command=remove_leg).grid(row=0, column=9, padx=5)
+tb.Button(leg_frame, text="Reset All", command=reset_strategy).grid(row=0, column=10, padx=5)
+
+# Plot area
+fig_builder = Figure(figsize=(6, 4), dpi=100)
+ax_builder = fig_builder.add_subplot(111)
+builder_canvas = FigureCanvasTkAgg(fig_builder, master=tab8)
+builder_canvas.get_tk_widget().pack(fill=BOTH, expand=True)
+
+metrics_var = tk.StringVar()
+tb.Label(tab8, textvariable=metrics_var, font=("Segoe UI", 10, "bold"), foreground="lightgreen").pack(pady=5)
+
+# Simulated price slider
+sim_frame = tb.Frame(tab8)
+sim_frame.pack(fill=X, pady=(5, 10))
+
+tb.Label(sim_frame, text="Simulated Price:").pack(side=LEFT, padx=(0, 10))
+sim_slider = ttk.Scale(sim_frame, from_=0, to=1000, variable=sim_price_var, command=lambda v: update_sim_price())
+sim_slider.pack(side=LEFT, fill=X, expand=True)
+tb.Label(sim_frame, textvariable=sim_price_label).pack(side=LEFT, padx=10)
+
+
 
 # Start app
 app.mainloop()
