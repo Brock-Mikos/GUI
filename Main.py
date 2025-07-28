@@ -462,7 +462,10 @@ def load_builder_expirations():
         stock = yf.Ticker(symbol)
         exps = stock.options
         builder_exp_menu["values"] = exps
+        builder_leg_exp_menu["values"] = exps
+        edit_exp_menu["values"] = exps
         if exps:
+            builder_leg_expiration_var.set(exps[0])
             builder_expiration_var.set(exps[0])
             load_builder_strikes()
     except Exception as e:
@@ -488,7 +491,7 @@ def load_builder_strikes():
 # Add Leg
 def add_leg():
     symbol = builder_symbol.get().strip().upper()
-    expiration = builder_expiration_var.get()
+    expiration = builder_leg_expiration_var.get()
     if not symbol or not expiration:
         return
 
@@ -508,12 +511,13 @@ def add_leg():
         ask = row["ask"].values[0]
         price = (bid + ask) / 2
 
-        leg_tree.insert("", tk.END, values=(option_type, side, strike, qty, f"{price:.2f}"))
-        strategy_data.append((option_type, side, strike, qty, price))
-
+        leg_tree.insert("", tk.END, values=(option_type, side, strike, qty, f"{price:.2f}", expiration))
+        strategy_data.append((option_type, side, strike, qty, price, expiration))
         plot_payoff()
+
     except Exception as e:
         print("Error adding leg:", e)
+
 
 # Remove leg
 def remove_leg():
@@ -534,6 +538,7 @@ def reset_strategy():
 last_sim_marker = None
 
 def plot_payoff(mark_price=None, hud_data=None):
+    from datetime import datetime
     ax_builder.clear()
     fig_builder.set_facecolor("#121212")
     ax_builder.set_facecolor("#1a1a1a")
@@ -551,29 +556,49 @@ def plot_payoff(mark_price=None, hud_data=None):
     prices = np.linspace(current_price * 0.5, current_price * 1.5, 300)
     payoff = np.zeros_like(prices)
 
+    # Get all expirations involved
+    expirations = sorted(set(exp for *_, exp in strategy_data), key=lambda d: pd.to_datetime(d))
+    if len(expirations) == 1:
+        short_exp, long_exp = expirations[0], expirations[0]
+    else:
+        short_exp, long_exp = expirations[0], expirations[-1]
+
+    T1 = (pd.to_datetime(short_exp) - pd.Timestamp.today()).days / 365
+    T2 = (pd.to_datetime(long_exp) - pd.Timestamp.today()).days / 365
+    T_remain = max(T2 - T1, 1 / 365)
+
+    r = 0.05  # Risk-free rate
+    iv = 0.3  # Use a fixed 30% vol or replace with real IV
+
     total_cost = 0
 
-    for leg in strategy_data:
-        opt_type, side, strike, qty, price = leg
-        qty = int(qty)
-        multiplier = 1 if side == "buy" else -1
-        total_cost += multiplier * qty * price * 100
+    for price_index, S in enumerate(prices):
+        pnl = 0
+        phase1 = 0
+        phase2 = 0
 
-        if opt_type == "call":
-            leg_payoff = np.maximum(prices - strike, 0) - price
-        else:
-            leg_payoff = np.maximum(strike - prices, 0) - price
+        for leg in strategy_data:
+            opt_type, side, strike, qty, cost, exp = leg
+            qty = int(qty)
+            sign = 1 if side == "buy" else -1
 
-        payoff += multiplier * qty * leg_payoff * 100
+            if exp == short_exp:
+                # Phase 1 payoff (expires at T1)
+                intrinsic = max(S - strike, 0) if opt_type == "call" else max(strike - S, 0)
+                phase1 += sign * qty * (intrinsic - cost) * 100
+            else:
+                # Survives to Phase 2: we value it at T2 using Black-Scholes
+                opt_val = black_scholes_price(S, strike, T_remain, r, iv, opt_type)
+                phase2 += sign * qty * (opt_val - cost) * 100
 
-    # Core payoff line
+        payoff[price_index] = phase1 + phase2
+
+    # Plot line and fill
     ax_builder.plot(prices, payoff, color="#00ffff", linewidth=2.2, label="Strategy Payoff", zorder=3)
-
-    # Fill areas
     ax_builder.fill_between(prices, payoff, where=payoff > 0, color="#00ff00", alpha=0.25, zorder=1)
     ax_builder.fill_between(prices, payoff, where=payoff < 0, color="#ff4444", alpha=0.25, zorder=1)
 
-    # Breakevens
+    # Breakeven detection
     breakevens = []
     for i in range(1, len(payoff)):
         if (payoff[i - 1] < 0 and payoff[i] >= 0) or (payoff[i - 1] > 0 and payoff[i] <= 0):
@@ -584,7 +609,7 @@ def plot_payoff(mark_price=None, hud_data=None):
     max_loss = np.min(payoff)
     risk_reward = abs(max_profit / max_loss) if max_loss != 0 else float("inf")
 
-    # Axes style
+    # Chart style
     ax_builder.spines['top'].set_visible(False)
     ax_builder.spines['right'].set_visible(False)
     ax_builder.tick_params(colors='white')
@@ -599,16 +624,12 @@ def plot_payoff(mark_price=None, hud_data=None):
     ax_builder.grid(True, color="#333333", linestyle="--", linewidth=0.5)
     ax_builder.set_axisbelow(True)
 
+    if sim_slider["from"] != prices[0] or sim_slider["to"] != prices[-1]:
+        sim_slider.config(from_=prices[0], to=prices[-1])
+
     # Simulated price marker
     if mark_price:
         ax_builder.axvline(mark_price, color="#ff66ff", linestyle=":", linewidth=2, label="Sim Price", zorder=2)
-        ax_builder.legend(facecolor="#1a1a1a", edgecolor="gray", labelcolor="white")
-    else:
-        ax_builder.legend(facecolor="#1a1a1a", edgecolor="gray", labelcolor="white")
-
-    # Live metrics
-    sim_slider.config(from_=prices[0], to=prices[-1])
-    sim_price_var.set(current_price)
 
     if hud_data:
         box_text = "\n".join([
@@ -626,11 +647,12 @@ def plot_payoff(mark_price=None, hud_data=None):
             color="white",
             zorder=10
         )
-    
+
+    ax_builder.legend(facecolor="#1a1a1a", edgecolor="gray", labelcolor="white")
     builder_canvas.draw()
 
     metrics_var.set(
-        f"💵 Net {'Debit' if total_cost > 0 else 'Credit'}: ${abs(total_cost):,.2f}   "
+        f"💵 Net Debit/Credit based on leg prices   "
         f"📈 Max Profit: ${max_profit:,.2f}   "
         f"⚠️ Max Loss: ${max_loss:,.2f}   "
         f"📍 Breakeven(s): {', '.join(f'{b:.2f}' for b in breakevens)}   "
@@ -639,8 +661,6 @@ def plot_payoff(mark_price=None, hud_data=None):
 
 
 def update_sim_price():
-    global last_sim_marker
-
     if not strategy_data or sim_price_var.get() == 0:
         return
 
@@ -667,10 +687,8 @@ def update_sim_price():
     else:
         ret = 0
 
-    # Format display
     sim_price_label.set(f"PnL: ${pnl:,.2f}")
 
-    # Replot with sim line and HUD box
     plot_payoff(mark_price=price, hud_data={
         "Sim Price": f"${price:,.2f}",
         "PnL": f"{'+' if pnl >= 0 else ''}${pnl:,.2f}",
@@ -678,6 +696,237 @@ def update_sim_price():
         "Type": f"{'Net Debit' if total_cost > 0 else 'Net Credit'}"
     })
 
+def build_predefined_strategy(strategy_name):
+    symbol = builder_symbol.get().strip().upper()
+    if not symbol:
+        return
+
+    try:
+        stock = yf.Ticker(symbol)
+        exps = stock.options
+        if len(exps) < 1:
+            return
+
+        expiration_primary = exps[0]
+        expiration_secondary = exps[1] if len(exps) > 1 else exps[0]
+
+        hist = stock.history(period="1d")
+        if hist.empty:
+            return
+        spot = hist["Close"][-1]
+
+        chain = stock.option_chain(expiration_primary)
+        strikes = sorted(set(chain.calls["strike"]).union(set(chain.puts["strike"])))
+        strikes = [k for k in strikes if k > 0]
+
+        atm = min(strikes, key=lambda x: abs(x - spot))
+        step = min(np.diff(sorted(strikes))) if len(strikes) > 1 else 5
+        K = atm
+        Kp = round(K + step, 2)
+        Kpp = round(K + 2 * step, 2)
+        Km = round(K - step, 2)
+        Kmm = round(K - 2 * step, 2)
+
+        reset_strategy()
+
+        def add_leg_auto(opt_type, side, strike, expiration, qty=1):
+            try:
+                chain_exp = stock.option_chain(expiration)
+                df = chain_exp.calls if opt_type == "call" else chain_exp.puts
+                row = df[df["strike"] == strike]
+                if row.empty:
+                    return
+                bid = row["bid"].values[0]
+                ask = row["ask"].values[0]
+                price = (bid + ask) / 2
+                leg_tree.insert("", tk.END, values=(opt_type, side, strike, qty, f"{price:.2f}", expiration))
+                strategy_data.append((opt_type, side, strike, qty, price, expiration))
+            except Exception as e:
+                print(f"Error adding leg: {e}")
+
+        # Define all supported strategies
+        strategy_map = {
+            "Vertical Call Spread": lambda: [
+                ("call", "buy", K, expiration_primary),
+                ("call", "sell", Kp, expiration_primary)
+            ],
+            "Vertical Put Spread": lambda: [
+                ("put", "buy", Kp, expiration_primary),
+                ("put", "sell", K, expiration_primary)
+            ],
+            "Calendar Spread": lambda: [
+                ("call", "buy", K, expiration_secondary),
+                ("call", "sell", K, expiration_primary)
+            ],
+            "Straddle": lambda: [
+                ("call", "buy", K, expiration_primary),
+                ("put", "buy", K, expiration_primary)
+            ],
+            "Strangle": lambda: [
+                ("call", "buy", Kp, expiration_primary),
+                ("put", "buy", Km, expiration_primary)
+            ],
+            "Iron Condor": lambda: [
+                ("call", "sell", Kp, expiration_primary),
+                ("call", "buy", Kpp, expiration_primary),
+                ("put", "sell", Km, expiration_primary),
+                ("put", "buy", Kmm, expiration_primary)
+            ],
+            "Iron Butterfly": lambda: [
+                ("call", "sell", K, expiration_primary),
+                ("put", "sell", K, expiration_primary),
+                ("call", "buy", Kp, expiration_primary),
+                ("put", "buy", Km, expiration_primary)
+            ],
+            "Ratio Spread": lambda: [
+                ("call", "buy", K, expiration_primary),
+                ("call", "sell", Kp, expiration_primary, 2)
+            ],
+            "Covered Call": lambda: [
+                ("call", "sell", Kp, expiration_primary)
+            ],
+            "Protective Put": lambda: [
+                ("put", "buy", Km, expiration_primary)
+            ],
+            "Diagonal Spread": lambda: [
+                ("call", "buy", K, expiration_secondary),
+                ("call", "sell", Kp, expiration_primary)
+            ],
+            "Butterfly Spread": lambda: [
+                ("call", "buy", Km, expiration_primary),
+                ("call", "sell", K, expiration_primary, 2),
+                ("call", "buy", Kp, expiration_primary)
+            ],
+            "Box Spread": lambda: [
+                ("call", "buy", K, expiration_primary),
+                ("call", "sell", Kp, expiration_primary),
+                ("put", "sell", K, expiration_primary),
+                ("put", "buy", Kp, expiration_primary)
+            ],
+            "Collar": lambda: [
+                ("put", "buy", Km, expiration_primary),
+                ("call", "sell", Kp, expiration_primary)
+            ],
+            "Synthetic Long Stock": lambda: [
+                ("call", "buy", K, expiration_primary),
+                ("put", "sell", K, expiration_primary)
+            ],
+            "Reverse Iron Condor": lambda: [
+                ("call", "buy", Kp, expiration_primary),
+                ("call", "sell", Kpp, expiration_primary),
+                ("put", "buy", Km, expiration_primary),
+                ("put", "sell", Kmm, expiration_primary)
+            ],
+            "Jade Lizard": lambda: [
+                ("call", "sell", Kp, expiration_primary),
+                ("call", "buy", Kpp, expiration_primary),
+                ("put", "sell", Km, expiration_primary)
+            ],
+            "Reverse Jade Lizard": lambda: [
+                ("put", "sell", Km, expiration_primary),
+                ("put", "buy", Kmm, expiration_primary),
+                ("call", "sell", Kp, expiration_primary)
+            ],
+            "Call Backspread": lambda: [
+                ("call", "sell", K, expiration_primary),
+                ("call", "buy", Kp, expiration_primary, 2)
+            ],
+            "Put Backspread": lambda: [
+                ("put", "sell", K, expiration_primary),
+                ("put", "buy", Km, expiration_primary, 2)
+            ],
+            "Broken Wing Butterfly": lambda: [
+                ("call", "buy", Km, expiration_primary),
+                ("call", "sell", K, expiration_primary, 2),
+                ("call", "buy", Kpp, expiration_primary)
+            ],
+            "Unbalanced Condor": lambda: [
+                ("call", "sell", Kp, expiration_primary, 2),
+                ("call", "buy", Kpp, expiration_primary),
+                ("put", "sell", Km, expiration_primary),
+                ("put", "buy", Kmm, expiration_primary, 2)
+            ],
+            "Double Diagonal": lambda: [
+                ("call", "buy", K, expiration_secondary),
+                ("call", "sell", Kp, expiration_primary),
+                ("put", "buy", K, expiration_secondary),
+                ("put", "sell", Km, expiration_primary)
+            ],
+            "Christmas Tree Spread": lambda: [
+                ("call", "buy", Km, expiration_primary),
+                ("call", "sell", K, expiration_primary, 2),
+                ("call", "buy", Kp, expiration_primary)
+            ],
+            "Lizard Spread": lambda: [
+                ("call", "sell", Kp, expiration_primary),
+                ("call", "buy", Kpp, expiration_primary),
+                ("put", "sell", Km, expiration_primary)
+            ]
+        }
+
+        if strategy_name in strategy_map:
+            for leg in strategy_map[strategy_name]():
+                add_leg_auto(*leg)
+
+        plot_payoff()
+
+    except Exception as e:
+        print(f"Error generating strategy: {e}")
+
+def load_leg_for_edit(event=None):
+    refresh_edit_strike_choices(edit_exp_var.get())
+    selected = leg_tree.selection()
+    if not selected:
+        return
+    idx = leg_tree.index(selected[0])
+    leg = strategy_data[idx]
+    edit_strike_var.set(leg[2])  # strike
+    edit_exp_var.set(leg[5])     # expiration
+    selected_leg_index.set(idx)
+
+def update_leg():
+    idx = selected_leg_index.get()
+    if idx == -1 or idx >= len(strategy_data):
+        return
+
+    symbol = builder_symbol.get().strip().upper()
+    new_strike = float(edit_strike_var.get())
+    new_exp = edit_exp_var.get()
+
+    opt_type, side, _, qty, _, _ = strategy_data[idx]
+    try:
+        stock = yf.Ticker(symbol)
+        chain = stock.option_chain(new_exp)
+        df = chain.calls if opt_type == "call" else chain.puts
+        row = df[df["strike"] == new_strike]
+        if row.empty:
+            return
+        bid = row["bid"].values[0]
+        ask = row["ask"].values[0]
+        price = (bid + ask) / 2
+
+        # Update strategy_data
+        strategy_data[idx] = (opt_type, side, new_strike, qty, price, new_exp)
+
+        # Update treeview
+        leg_tree.item(leg_tree.get_children()[idx], values=(
+            opt_type, side, new_strike, qty, f"{price:.2f}", new_exp
+        ))
+
+        plot_payoff()
+    except Exception as e:
+        print("Update error:", e)
+
+def refresh_edit_strike_choices(exp):
+    symbol = builder_symbol.get().strip().upper()
+    if not symbol or not exp:
+        return
+    try:
+        chain = yf.Ticker(symbol).option_chain(exp)
+        strikes = sorted(set(chain.calls["strike"]).union(set(chain.puts["strike"])))
+        edit_strike_menu["values"] = strikes
+    except Exception as e:
+        print("Error loading strikes for edit:", e)
 
 
 def init_app():
@@ -1161,6 +1410,28 @@ builder_exp_menu.grid(row=0, column=3, padx=5)
 builder_symbol.bind("<Return>", lambda e: load_builder_expirations())
 builder_exp_menu.bind("<<ComboboxSelected>>", lambda e: load_builder_strikes())
 
+# Strategy Selector
+strategy_frame = tb.Frame(tab8)
+strategy_frame.pack(fill=X, pady=10)
+
+tb.Label(strategy_frame, text="Select Strategy:").pack(side=LEFT, padx=5)
+
+strategy_type_var = tk.StringVar()
+strategy_menu = ttk.Combobox(strategy_frame, textvariable=strategy_type_var, width=30)
+strategy_menu["values"] = [
+    "Vertical Call Spread", "Vertical Put Spread", "Calendar Spread", "Straddle",
+    "Strangle", "Iron Condor", "Iron Butterfly", "Ratio Spread", "Covered Call",
+    "Protective Put", "Diagonal Spread", "Butterfly Spread", "Box Spread", "Collar",
+    "Synthetic Long Stock", "Reverse Iron Condor", "Jade Lizard", "Reverse Jade Lizard",
+    "Call Backspread", "Put Backspread", "Broken Wing Butterfly", "Unbalanced Condor",
+    "Double Diagonal", "Christmas Tree Spread", "Lizard Spread"
+]
+strategy_menu.current(0)
+strategy_menu.pack(side=LEFT)
+
+tb.Button(strategy_frame, text="Generate Strategy", command=lambda: build_predefined_strategy(strategy_type_var.get())).pack(side=LEFT, padx=10)
+
+
 # Load strike prices
 builder_strike_list = []
 builder_strike_var = tk.DoubleVar()
@@ -1183,6 +1454,11 @@ tb.Label(leg_frame, text="Strike:").grid(row=0, column=4)
 builder_strike_dropdown = ttk.Combobox(leg_frame, textvariable=builder_strike_var, values=builder_strike_list, width=10)
 builder_strike_dropdown.grid(row=0, column=5)
 
+builder_leg_expiration_var = tk.StringVar()
+tb.Label(leg_frame, text="Expiration:").grid(row=0, column=8)
+builder_leg_exp_menu = ttk.Combobox(leg_frame, textvariable=builder_leg_expiration_var, width=15)
+builder_leg_exp_menu.grid(row=0, column=9)
+
 tb.Label(leg_frame, text="Qty:").grid(row=0, column=6)
 tb.Entry(leg_frame, textvariable=qty_var, width=5).grid(row=0, column=7)
 
@@ -1194,12 +1470,34 @@ sim_price_label = tk.StringVar()
 table_frame = tb.Frame(tab8)
 table_frame.pack(fill=X, pady=10)
 
-columns = ("Type", "Side", "Strike", "Qty", "Price")
+columns = ("Type", "Side", "Strike", "Qty", "Price","Expiration")
 leg_tree = ttk.Treeview(table_frame, columns=columns, show="headings", height=6)
 for col in columns:
     leg_tree.heading(col, text=col)
     leg_tree.column(col, width=80, anchor="center")
 leg_tree.pack(side=LEFT, fill="x", expand=True)
+
+# Editable Leg Panel
+editor_frame = tb.Frame(tab8)
+editor_frame.pack(fill=X, pady=(5, 10))
+
+edit_strike_var = tk.DoubleVar()
+edit_exp_var = tk.StringVar()
+selected_leg_index = tk.IntVar(value=-1)
+
+tb.Label(editor_frame, text="Edit Strike:").pack(side=LEFT)
+edit_strike_menu = ttk.Combobox(editor_frame, textvariable=edit_strike_var, width=10)
+edit_strike_menu.pack(side=LEFT, padx=5)
+
+tb.Label(editor_frame, text="Edit Expiration:").pack(side=LEFT)
+edit_exp_menu = ttk.Combobox(editor_frame, textvariable=edit_exp_var, width=15)
+edit_exp_menu.pack(side=LEFT, padx=5)
+edit_exp_var.trace_add("write", lambda *_, e=None: refresh_edit_strike_choices(edit_exp_var.get()))
+
+
+leg_tree.bind("<<TreeviewSelect>>", load_leg_for_edit)
+
+tb.Button(editor_frame, text="Update Leg", command=update_leg).pack(side=LEFT, padx=10)
 
 tb.Button(leg_frame, text="Add Leg", command=add_leg).grid(row=0, column=8, padx=10)
 tb.Button(leg_frame, text="Remove Selected", command=remove_leg).grid(row=0, column=9, padx=5)
